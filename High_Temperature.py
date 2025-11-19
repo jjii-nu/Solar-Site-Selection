@@ -85,14 +85,21 @@ def match_location(row):
 df['matched_name'] = df.apply(match_location, axis=1)
 
 # ============================================================================
-# 월별 최고기온 히트맵 시각화 (군집화 X, 실제 값 표시)
+# [수정] 연간 통합(Global) 최고기온 히트맵 시각화
+# 1년 전체의 최소/최대 기온을 기준으로 색상을 매핑하여 계절별 온도 차이를 시각화
 # ============================================================================
 fig, axes = plt.subplots(3, 4, figsize=(20, 18))
-fig.suptitle('월별 최고기온 현황 (단위: ℃)', fontsize=22, fontweight='bold')
+fig.suptitle('월별 최고기온 현황 (연간 통합 스케일 적용)', fontsize=22, fontweight='bold')
 
-# 색상맵 설정 (기온은 보통 Coolwarm, RdYlBu 등을 사용)
-# 여기서는 낮은 온도(파랑) -> 높은 온도(빨강)인 'coolwarm' 사용
+# 색상맵 설정 (Coolwarm: 파랑(추움) -> 흰색 -> 빨강(더움))
 cmap = plt.cm.coolwarm 
+
+# [핵심 변경 사항] 1년 치 전체 데이터에서 최소/최대값 계산 (Global Min/Max)
+# 이를 기준으로 모든 달의 색상을 결정합니다.
+global_min = df['최고기온'].min()
+global_max = df['최고기온'].max()
+
+print(f"전체 데이터 최소 기온: {global_min}도, 최대 기온: {global_max}도")
 
 monthly_stats = {}
 
@@ -118,12 +125,10 @@ for month in range(1, 13):
             
     merged_df = pd.DataFrame(merged_data)
     
+    # 텍스트 통계용으로 해당 월의 min/max는 따로 저장
     if len(merged_df) > 0:
-        vmin = merged_df['value'].min()
-        vmax = merged_df['value'].max()
-        monthly_stats[month] = (vmin, vmax)
+        monthly_stats[month] = (merged_df['value'].min(), merged_df['value'].max())
     else:
-        vmin, vmax = 0, 0
         monthly_stats[month] = (0, 0)
 
     # 2. 배경 그리기
@@ -144,12 +149,12 @@ for month in range(1, 13):
         row = item['row']
         col = item['col']
         
-        # 정규화 (해당 월의 최소~최대 기준으로 색상 결정)
-        # 편차를 잘 보여주기 위해 월별 Min-Max Scaling 사용
-        if vmax - vmin == 0:
+        # [수정] 전역 스케일(Global Scale) 적용
+        # 1년 전체의 min/max를 기준으로 정규화하므로, 겨울은 파랗고 여름은 빨갛게 나옴
+        if global_max - global_min == 0:
             norm_val = 0.5
         else:
-            norm_val = (val - vmin) / (vmax - vmin)
+            norm_val = (val - global_min) / (global_max - global_min)
             
         color = cmap(norm_val)
         
@@ -160,8 +165,8 @@ for month in range(1, 13):
                          facecolor=color, alpha=0.9, edgecolor='white', linewidth=0.5)
         ax.add_patch(rect)
         
-        # [핵심 요구사항] 각 셀에 값(온도) 텍스트로 표시
-        # 글자색: 배경이 너무 어두우면(파랑/빨강 끝자락) 흰색, 중간이면 검은색
+        # 값(온도) 텍스트로 표시
+        # 배경이 극단적으로 어두우면(파랑/빨강) 흰 글씨, 중간(흰색)이면 검은 글씨
         text_color = 'white' if (norm_val < 0.3 or norm_val > 0.7) else 'black'
         
         ax.text(item['center_x'], item['center_y'], f"{val:.1f}", 
@@ -176,23 +181,25 @@ for month in range(1, 13):
 # ============================================================================
 # 범례 및 정보 표시
 # ============================================================================
-# 컬러바 추가 (상대적 온도 분포)
+# 컬러바 추가 (전역 온도 분포)
 cbar_ax = fig.add_axes([0.25, 0.08, 0.5, 0.02]) 
-norm = plt.Normalize(vmin=0, vmax=1)
+norm = plt.Normalize(vmin=global_min, vmax=global_max)
 cb = plt.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), cax=cbar_ax, orientation='horizontal')
-cb.set_label('월별 상대 온도 (파랑: 해당 월 최저 / 빨강: 해당 월 최고)', fontsize=12)
-cb.set_ticks([0, 0.5, 1])
-cb.set_ticklabels(['Low', 'Avg', 'High'])
+cb.set_label(f'기온 (전체 범위: {global_min:.1f}°C ~ {global_max:.1f}°C)', fontsize=12)
+# 틱 설정 (최소, 중간, 최대)
+mid_val = (global_min + global_max) / 2
+cb.set_ticks([global_min, mid_val, global_max])
+cb.set_ticklabels([f'Min ({global_min:.1f})', f'Avg ({mid_val:.1f})', f'Max ({global_max:.1f})'])
 
 # 월별 온도 범위 텍스트 출력
-plt.figtext(0.5, 0.045, "※ 각 월별 실제 최고기온 범위 (Min ~ Max)", ha="center", fontsize=12, fontweight='bold')
+plt.figtext(0.5, 0.045, "※ 각 월별 실제 최고기온 범위", ha="center", fontsize=12, fontweight='bold')
 
-stats_text_1 = "   ".join([f"[{m}월: {monthly_stats[m][0]:.1f}°C ~ {monthly_stats[m][1]:.1f}°C]" for m in range(1, 7)])
-stats_text_2 = "   ".join([f"[{m}월: {monthly_stats[m][0]:.1f}°C ~ {monthly_stats[m][1]:.1f}°C]" for m in range(7, 13)])
+stats_text_1 = "   ".join([f"[{m}월: {monthly_stats[m][0]:.1f}~{monthly_stats[m][1]:.1f}]" for m in range(1, 7)])
+stats_text_2 = "   ".join([f"[{m}월: {monthly_stats[m][0]:.1f}~{monthly_stats[m][1]:.1f}]" for m in range(7, 13)])
 
 plt.figtext(0.5, 0.03, stats_text_1, ha="center", fontsize=10, fontfamily='Monospace')
 plt.figtext(0.5, 0.015, stats_text_2, ha="center", fontsize=10, fontfamily='Monospace')
 
 plt.subplots_adjust(bottom=0.15, top=0.95)
-plt.savefig('monthly_max_temperature_map.png', dpi=300, bbox_inches='tight')
+plt.savefig('monthly_max_temperature_map_global.png', dpi=300, bbox_inches='tight')
 plt.show()
